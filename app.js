@@ -1,7 +1,7 @@
-/* Y2K MIDI GEN — single-page, iPhone-first, 3 files.
-   - No external libs
-   - MIDI Type 1 writer (PPQ 480)
-   - WebAudio preview (simple synth + drums)
+/* Y2K MIDI GEN — updated audio engine:
+   - MASTER CLIP (auto per artist)
+   - SIDECHAIN (auto per artist) — ducks music bus on kick hits
+   - LOFI/CRUSH (auto if ESDEEKID selected; blended in MIX)
 */
 
 (() => {
@@ -42,24 +42,27 @@
 
   // ---------- SETTINGS MODEL ----------
   const state = {
-    // generation controls
     seed: 0,
-    selectedArtists: [], // ordered
-    songSketch: false,   // toggle
-    bpmMode: "artist",   // artist | fixed | manual | range
-    bpm: 170,            // current bpm used in generation
+    selectedArtists: [],
+    songSketch: false,
+    bpmMode: "artist",
+    bpm: 170,
     bpmFixed: 170,
     bpmRange: [155, 180],
     bpmManual: 170,
 
-    keyMode: "auto",     // auto | pick
-    root: 0,             // 0=C
-    scaleMode: "auto",   // auto | natural | harmonic | phrygian
-    scale: "natural",    // resolved for current gen
+    keyMode: "auto",
+    root: 0,
+    scaleMode: "auto",
+    scale: "natural",
 
-    // derived
-    resolved: null,      // last generated song object
-    midiBytes: null,     // Uint8Array
+    // NEW: audio modes
+    clipMode: "auto",       // auto | on | off
+    sidechainMode: "auto",  // auto | on | off
+    crushMode: "auto",      // auto | on | off
+
+    resolved: null,
+    midiBytes: null,
     hiddenHUD: false,
   };
 
@@ -73,106 +76,55 @@
     "KEN CARSON",
   ];
 
-  // Artist probability profiles
-  // Values are in [0..1] for "intensity" parameters, plus harmony weights and BPM ranges.
   const PROFILES = {
     "2HOLLIS": {
       bpm: [150, 175],
-      density: 0.35,
-      aggro: 0.30,
-      space: 0.65,
-      repetition: 0.78,
+      density: 0.35, aggro: 0.30, space: 0.65, repetition: 0.78,
       harmony: { drone: 0.50, power: 0.32, two: 0.16, three: 0.02 },
-      hatsRoll: 0.12,
-      fills: 0.18,
-      slides: 0.18,
-      halftime: 0.20,
-      bells: 0.25,
-      texture: 0.55,
+      hatsRoll: 0.12, fills: 0.18, slides: 0.18, halftime: 0.20,
+      bells: 0.25, texture: 0.55,
     },
     "FAKEMINK": {
       bpm: [155, 180],
-      density: 0.55,
-      aggro: 0.45,
-      space: 0.45,
-      repetition: 0.65,
+      density: 0.55, aggro: 0.45, space: 0.45, repetition: 0.65,
       harmony: { drone: 0.32, power: 0.28, two: 0.34, three: 0.06 },
-      hatsRoll: 0.22,
-      fills: 0.28,
-      slides: 0.28,
-      halftime: 0.22,
-      bells: 0.65,
-      texture: 0.45,
+      hatsRoll: 0.22, fills: 0.28, slides: 0.28, halftime: 0.22,
+      bells: 0.65, texture: 0.45,
     },
     "ESDEEKID": {
       bpm: [165, 190],
-      density: 0.78,
-      aggro: 0.82,
-      space: 0.22,
-      repetition: 0.55,
+      density: 0.78, aggro: 0.82, space: 0.22, repetition: 0.55,
       harmony: { drone: 0.18, power: 0.32, two: 0.44, three: 0.06 },
-      hatsRoll: 0.52,
-      fills: 0.45,
-      slides: 0.55,
-      halftime: 0.18,
-      bells: 0.35,
-      texture: 0.35,
+      hatsRoll: 0.52, fills: 0.45, slides: 0.55, halftime: 0.18,
+      bells: 0.35, texture: 0.35,
     },
     "FENG": {
       bpm: [145, 170],
-      density: 0.48,
-      aggro: 0.58,
-      space: 0.55,
-      repetition: 0.70,
+      density: 0.48, aggro: 0.58, space: 0.55, repetition: 0.70,
       harmony: { drone: 0.44, power: 0.32, two: 0.22, three: 0.02 },
-      hatsRoll: 0.22,
-      fills: 0.26,
-      slides: 0.30,
-      halftime: 0.50,
-      bells: 0.20,
-      texture: 0.62,
+      hatsRoll: 0.22, fills: 0.26, slides: 0.30, halftime: 0.50,
+      bells: 0.20, texture: 0.62,
     },
     "BLADEE": {
       bpm: [140, 170],
-      density: 0.50,
-      aggro: 0.40,
-      space: 0.60,
-      repetition: 0.68,
+      density: 0.50, aggro: 0.40, space: 0.60, repetition: 0.68,
       harmony: { drone: 0.26, power: 0.24, two: 0.42, three: 0.08 },
-      hatsRoll: 0.20,
-      fills: 0.22,
-      slides: 0.20,
-      halftime: 0.20,
-      bells: 0.70,
-      texture: 0.48,
+      hatsRoll: 0.20, fills: 0.22, slides: 0.20, halftime: 0.20,
+      bells: 0.70, texture: 0.48,
     },
     "FIMIGUERRERO": {
       bpm: [160, 190],
-      density: 0.76,
-      aggro: 0.74,
-      space: 0.28,
-      repetition: 0.56,
+      density: 0.76, aggro: 0.74, space: 0.28, repetition: 0.56,
       harmony: { drone: 0.20, power: 0.30, two: 0.44, three: 0.06 },
-      hatsRoll: 0.46,
-      fills: 0.46,
-      slides: 0.44,
-      halftime: 0.25,
-      bells: 0.30,
-      texture: 0.42,
+      hatsRoll: 0.46, fills: 0.46, slides: 0.44, halftime: 0.25,
+      bells: 0.30, texture: 0.42,
     },
     "KEN CARSON": {
       bpm: [150, 180],
-      density: 0.72,
-      aggro: 0.70,
-      space: 0.28,
-      repetition: 0.58,
+      density: 0.72, aggro: 0.70, space: 0.28, repetition: 0.58,
       harmony: { drone: 0.14, power: 0.46, two: 0.36, three: 0.04 },
-      hatsRoll: 0.40,
-      fills: 0.40,
-      slides: 0.42,
-      halftime: 0.16,
-      bells: 0.22,
-      texture: 0.30,
+      hatsRoll: 0.40, fills: 0.40, slides: 0.42, halftime: 0.16,
+      bells: 0.22, texture: 0.30,
     },
   };
 
@@ -180,7 +132,6 @@
   function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
   function lerp(a, b, t){ return a + (b - a) * t; }
 
-  // Seeded RNG (mulberry32)
   function mulberry32(seed){
     let t = seed >>> 0;
     return function(){
@@ -197,7 +148,6 @@
     return a[0] >>> 0;
   }
   function pickWeighted(rng, items){
-    // items: [{k, w}]
     const total = items.reduce((s,it)=>s+it.w,0);
     let r = rng()*total;
     for(const it of items){
@@ -229,18 +179,12 @@
 
   function toggleArtist(name){
     const idx = state.selectedArtists.indexOf(name);
-    if(idx >= 0){
-      state.selectedArtists.splice(idx,1);
-    } else {
-      state.selectedArtists.push(name);
-    }
-    if(state.selectedArtists.length === 0){
-      // enforce at least one artist; default to FAKEMINK if user turns all off
-      state.selectedArtists = ["FAKEMINK"];
-    }
+    if(idx >= 0) state.selectedArtists.splice(idx,1);
+    else state.selectedArtists.push(name);
+
+    if(state.selectedArtists.length === 0) state.selectedArtists = ["FAKEMINK"];
     syncArtistUI();
     updateModeLabel();
-    // Update BPM display if in artist mode
     if(state.bpmMode === "artist"){
       const [mn,mx] = getArtistBpmRange();
       bpmMinInput.value = mn;
@@ -257,9 +201,7 @@
   }
 
   function updateModeLabel(){
-    const n = state.selectedArtists.length;
-    if(n === 1) modeLabelEl.textContent = "MODE: SOLO";
-    else modeLabelEl.textContent = "MODE: MIX";
+    modeLabelEl.textContent = (state.selectedArtists.length === 1) ? "MODE: SOLO" : "MODE: MIX";
   }
 
   function buildKeyButtons(){
@@ -283,11 +225,6 @@
     });
   }
 
-  function setSeg(setting, value){
-    state[setting] = value;
-    syncSegUI();
-  }
-
   function syncSegUI(){
     [...document.querySelectorAll(".segBtn")].forEach(btn => {
       const s = btn.dataset.setting;
@@ -299,8 +236,6 @@
     bpmMinInput.value = String(state.bpmRange[0]);
     bpmMaxInput.value = String(state.bpmRange[1]);
     bpmDisplay.textContent = String(state.bpmMode === "manual" ? state.bpmManual : state.bpm);
-
-    // key buttons only useful in pick mode, but keep visible per your vibe
   }
 
   function toggleSettings(){
@@ -310,22 +245,16 @@
   function setHiddenHUD(hidden){
     state.hiddenHUD = hidden;
     $("#hud").classList.toggle("hidden", hidden);
-    minibar.classList.toggle("hidden", !hidden);
+    $("#minibar").classList.toggle("hidden", !hidden);
     hideBtn.textContent = hidden ? "SHOW" : "HIDE";
-
-    // When hidden: keep DOWNLOAD + TRACKLIST visible (footer stays),
-    // plus minibar offers SHOW + DOWNLOAD.
   }
 
   // ---------- ARTIST BLEND ----------
   function blendProfiles(selected){
-    // main artist = first selected
     const main = selected[0];
     const base = structuredClone(PROFILES[main]);
-
     if(selected.length === 1) return { main, profile: base, mode: "SOLO" };
 
-    // Blend remaining with decreasing weights
     const weights = selected.map((_, i) => (i === 0 ? 0.52 : 0.48 / (selected.length - 1)));
     const out = structuredClone(base);
 
@@ -334,23 +263,12 @@
       selected.forEach((name, i) => v += PROFILES[name][key] * weights[i]);
       out[key] = v;
     }
-    blendNum("density");
-    blendNum("aggro");
-    blendNum("space");
-    blendNum("repetition");
-    blendNum("hatsRoll");
-    blendNum("fills");
-    blendNum("slides");
-    blendNum("halftime");
-    blendNum("bells");
-    blendNum("texture");
+    ["density","aggro","space","repetition","hatsRoll","fills","slides","halftime","bells","texture"].forEach(blendNum);
 
-    // Blend BPM ranges
     const bpmMin = selected.reduce((s,name,i)=>s+PROFILES[name].bpm[0]*weights[i],0);
     const bpmMax = selected.reduce((s,name,i)=>s+PROFILES[name].bpm[1]*weights[i],0);
     out.bpm = [Math.round(bpmMin), Math.round(bpmMax)];
 
-    // Blend harmony weights then normalize
     const keys = ["drone","power","two","three"];
     const hw = {};
     keys.forEach(k=>{
@@ -370,17 +288,12 @@
 
   // ---------- MUSIC THEORY ----------
   function scaleIntervals(mode){
-    // returns semitone offsets for scale degrees 1..7 (0-based)
-    // Natural minor: 0,2,3,5,7,8,10
-    // Harmonic minor: 0,2,3,5,7,8,11
-    // Phrygian: 0,1,3,5,7,8,10
     if(mode === "harmonic") return [0,2,3,5,7,8,11];
     if(mode === "phrygian") return [0,1,3,5,7,8,10];
     return [0,2,3,5,7,8,10];
   }
 
   function degreeToMidi(rootMidi, intervals, deg, octaveShift=0){
-    // deg: 1..7
     const semis = intervals[(deg-1) % 7];
     return rootMidi + semis + octaveShift*12;
   }
@@ -393,57 +306,35 @@
   const LOOP_BARS = 8;
   const LOOP_TICKS = LOOP_BARS * BAR;
 
-  // Tracks we generate/export
   const TRACKS = [
-    { id:"PAD",   name:"PAD/CHORD", ch:0, prog: 89 },  // Pad 2-ish
-    { id:"LEAD",  name:"LEAD",      ch:1, prog: 81 },  // Lead 2-ish
-    { id:"BELL",  name:"BELL/COUNTER", ch:2, prog: 10 }, // Music Box-ish
-    { id:"BASS",  name:"808/BASS",  ch:3, prog: 38 },  // Synth Bass-ish
+    { id:"PAD",   name:"PAD/CHORD", ch:0, prog: 89 },
+    { id:"LEAD",  name:"LEAD",      ch:1, prog: 81 },
+    { id:"BELL",  name:"BELL/COUNTER", ch:2, prog: 10 },
+    { id:"BASS",  name:"808/BASS",  ch:3, prog: 38 },
     { id:"KICK",  name:"KICK",      ch:9, drum:true },
     { id:"SNARE", name:"SNARE/CLAP",ch:9, drum:true },
     { id:"HATS",  name:"HATS",      ch:9, drum:true },
-    { id:"TEXT",  name:"TEXTURE",   ch:4, prog: 92 },  // Choir/Aahs-ish for texture mapping
+    { id:"TEXT",  name:"TEXTURE",   ch:4, prog: 92 },
   ];
 
-  // GM drum notes
-  const DR = {
-    kick: 36,
-    snare: 38,
-    clap: 39,
-    hatC: 42,
-    hatO: 46,
-    perc: 75,
-  };
+  const DR = { kick:36, snare:38, clap:39, hatC:42, hatO:46, perc:75 };
 
   function resolveScale(rng){
-    // Default weights like we discussed
-    // Natural 70%, Harmonic 20%, Phrygian 10%
     if(state.scaleMode !== "auto") return state.scaleMode;
-    const pick = pickWeighted(rng, [
+    return pickWeighted(rng, [
       {k:"natural", w:0.70},
       {k:"harmonic", w:0.20},
       {k:"phrygian", w:0.10},
     ]);
-    return pick;
   }
 
   function resolveRoot(rng){
     if(state.keyMode === "pick") return state.root;
-    // Weighted keys favor A/E/F a bit (like earlier)
     const keys = [0,1,2,3,4,5,6,7,8,9,10,11];
-    const weights = keys.map(k => {
-      // A=9, E=4, F=5
-      if(k === 9) return 2.0;
-      if(k === 4) return 1.6;
-      if(k === 5) return 1.4;
-      return 1.0;
-    });
+    const weights = keys.map(k => (k===9?2.0:(k===4?1.6:(k===5?1.4:1.0))));
     const total = weights.reduce((a,b)=>a+b,0);
     let r = rng()*total;
-    for(let i=0;i<keys.length;i++){
-      r -= weights[i];
-      if(r<=0) return keys[i];
-    }
+    for(let i=0;i<keys.length;i++){ r -= weights[i]; if(r<=0) return keys[i]; }
     return 0;
   }
 
@@ -460,18 +351,90 @@
       const a = Math.min(mn,mx), b = Math.max(mn,mx);
       return Math.round(lerp(a, b, rng()));
     }
-    // artist-based random
     const [mn,mx] = blend.profile.bpm;
     return Math.round(lerp(mn, mx, rng()));
   }
 
+  function randVel(rng, a, b){ return clamp(Math.round(lerp(a,b,rng())), 1, 127); }
+
+  function addNote(arr, t, d, n, v){
+    arr.push({t: Math.max(0, Math.floor(t)), d: Math.max(1, Math.floor(d)), n: n|0, v: v|0, type:"note"});
+  }
+  function addChord(arr, t, d, notes, v){ for(const n of notes) addNote(arr, t, d, n, v); }
+  function addDrum(arr, t, d, n, v){
+    arr.push({t: Math.max(0, Math.floor(t)), d: Math.max(1, Math.floor(d)), n: n|0, v: v|0, type:"drum"});
+  }
+
+  function enforceClashControl(lead, bass, rng){
+    const bassSet = new Set(bass.map(e => Math.floor(e.t / SIXTEENTH)));
+    let downbeatCount = 0;
+    for(const e of lead){
+      const s = Math.floor(e.t / SIXTEENTH);
+      if(bassSet.has(s) && (e.t % BEAT === 0)) downbeatCount++;
+    }
+    if(downbeatCount >= 6){
+      for(let i=lead.length-1; i>=0; i--){
+        const e = lead[i];
+        if((e.t % BEAT === 0) && chance(rng,0.35)) lead.splice(i,1);
+      }
+    }
+  }
+
+  function buildArrangement(songSketch, loopTicks){
+    if(!songSketch) return [{ name:"LOOP", start:0, len:loopTicks, mutes:{} }];
+    const intro = loopTicks/2;
+    const full = loopTicks;
+    const breakLen = loopTicks/2;
+    return [
+      { name:"INTRO",  start:0,           len:intro,    mutes:{KICK:true, BASS:true} },
+      { name:"DROP",   start:intro,       len:full,     mutes:{} },
+      { name:"BREAK",  start:intro+full,  len:breakLen, mutes:{KICK:true, BASS:true, HATS:true} },
+      { name:"RETURN", start:intro+full+breakLen, len:full, mutes:{} },
+    ];
+  }
+
+  function applyArrangement(tracks, arrangement, rng, prof){
+    const out = {};
+    const loopLen = LOOP_TICKS;
+
+    for(const [k, evs] of Object.entries(tracks)){
+      out[k] = [];
+      for(const sec of arrangement){
+        const sectionEvents = [];
+        const copies = Math.ceil(sec.len / loopLen);
+
+        for(let c=0; c<copies; c++){
+          const offset = sec.start + c*loopLen;
+          const maxT = sec.start + sec.len;
+          for(const e of evs){
+            const t = e.t + offset;
+            if(t >= sec.start && t < maxT) sectionEvents.push({...e, t});
+          }
+        }
+
+        const muted = sec.mutes[k] === true;
+        if(!muted){
+          const pullChance = clamp(0.20 + prof.space*0.20, 0.20, 0.40);
+          if(chance(rng, pullChance)){
+            const windowStart = sec.start + Math.floor((rng()*sec.len)/(BAR)) * BAR;
+            const w0 = windowStart + (chance(rng,0.5) ? 0 : BAR/2);
+            const w1 = w0 + BAR/2;
+            out[k].push(...sectionEvents.filter(e => !(e.t >= w0 && e.t < w1 && chance(rng,0.65))));
+          } else {
+            out[k].push(...sectionEvents);
+          }
+        }
+      }
+      out[k].sort((a,b)=>a.t-b.t);
+    }
+    return out;
+  }
+
   function buildSong(seed){
     const rng = mulberry32(seed);
-
     const blend = blendProfiles(state.selectedArtists);
     const prof = blend.profile;
 
-    // Resolve BPM + key + scale
     const scale = resolveScale(rng);
     const root = resolveRoot(rng);
     const bpm = resolveBpm(rng, blend);
@@ -481,15 +444,12 @@
     state.bpm = bpm;
     bpmDisplay.textContent = String(state.bpmMode === "manual" ? state.bpmManual : bpm);
 
-    // Helper numbers
     const intervals = scaleIntervals(scale);
-    const rootMidi = 60 + root; // C4 base
-    const rootBass = 36 + root; // C2 base
+    const rootMidi = 60 + root;
+    const rootBass = 36 + root;
 
-    // Determine feel (half-time chance)
     const isHalftime = chance(rng, prof.halftime);
 
-    // Harmony type
     const harmonyType = pickWeighted(rng, [
       {k:"drone", w:prof.harmony.drone},
       {k:"power", w:prof.harmony.power},
@@ -497,59 +457,43 @@
       {k:"three", w:prof.harmony.three},
     ]);
 
-    // Build chord progression (over 8 bars)
-    // degrees in minor context: i(1), VI(6), VII(7)
     let prog = [];
     if(harmonyType === "drone"){
       prog = Array(LOOP_BARS).fill({deg:1, kind:"drone"});
     } else if(harmonyType === "power"){
-      // mostly i, with optional VII on bar 8
       prog = Array.from({length:LOOP_BARS}, (_,i)=> {
         const deg = (i === LOOP_BARS-1 && chance(rng,0.22)) ? 7 : 1;
         return {deg, kind:"power"};
       });
     } else if(harmonyType === "two"){
-      // i->VI or i->VII
       const second = chance(rng,0.55) ? 6 : 7;
       prog = Array.from({length:LOOP_BARS}, (_,i)=> (i < LOOP_BARS/2 ? {deg:1, kind:"tri"} : {deg:second, kind:"tri"}));
     } else {
-      // three chord rare: i -> VI -> VII
       const map = [1,1,6,6,7,7,1,1];
       prog = map.map(d=>({deg:d, kind:"tri"}));
     }
 
-    // PAD notes
+    // PAD
     const padEvents = [];
     for(let bar=0; bar<LOOP_BARS; bar++){
       const t0 = bar * BAR;
       const d = prog[bar].deg;
 
-      // voicings: 2-3 notes, often omit 3rd (power vibe)
       const omitThird = chance(rng, 0.70);
       const useTriad = !omitThird && chance(rng, 0.80);
 
-      // Build chord degrees for minor triad on i, major-ish for VI/VII (just MIDI color)
-      // We'll treat VI/VII as "major" by using degree+ (3rd as major) approximation:
-      // minor triad: 1-b3-5
-      // major triad: 1-3-5
       const isMinor = (d === 1);
-      const third = isMinor ? 3 : 3; // We'll still use scale degree 3 but choose semitone tweak for major
-      let n1 = degreeToMidi(rootMidi, intervals, d, -1); // around C3-C4
-      let n5 = degreeToMidi(rootMidi, intervals, d, -1) + 7; // perfect fifth approx
-      let n3 = degreeToMidi(rootMidi, intervals, ((d+2-1)%7)+1, -1); // 3rd by scale degree
+      let n1 = degreeToMidi(rootMidi, intervals, d, -1);
+      let n5 = degreeToMidi(rootMidi, intervals, d, -1) + 7;
+      let n3 = degreeToMidi(rootMidi, intervals, ((d+2-1)%7)+1, -1);
 
-      // For "major-ish": push third up 1 semitone sometimes for brighter
       if(!isMinor && chance(rng,0.55)) n3 += 1;
 
-      const notes = [];
-      notes.push(n1);
-      notes.push(n5);
+      const notes = [n1, n5];
       if(useTriad) notes.push(n3);
 
-      // lengths: whole or half; sometimes retrigger midpoint softly
       const len = chance(rng,0.65) ? BAR : BAR/2;
       addChord(padEvents, t0, len, notes, randVel(rng, 48, 72));
-
       if(chance(rng, 0.30) && len === BAR){
         addChord(padEvents, t0 + BAR/2, BAR/2, notes, randVel(rng, 30, 52));
       }
@@ -557,14 +501,9 @@
 
     // LEAD motif
     const leadEvents = [];
-    const motifBars = pickWeighted(rng, [
-      {k:1, w:0.55},
-      {k:2, w:0.35},
-      {k:4, w:0.10},
-    ]);
+    const motifBars = pickWeighted(rng, [{k:1,w:0.55},{k:2,w:0.35},{k:4,w:0.10}]);
     const motifTicks = motifBars * BAR;
 
-    // Note pool degrees (favor 1, b3,5,b7)
     const pool = [1,3,5,7,2,4,6];
     const weights = [2.2, 1.8, 2.0, 1.6, 0.9, 0.9, 0.6];
     const motif = [];
@@ -573,41 +512,30 @@
 
     for(let i=0;i<noteCount;i++){
       const deg = pickWeighted(rng, pool.map((d,ix)=>({k:d,w:weights[ix]})));
-      // step vs leap (60/40)
       const useStep = chance(rng, 0.60);
       let chosen = deg;
       if(useStep){
-        // nudge around prev
         const dir = chance(rng,0.5) ? -1 : 1;
         chosen = clamp(((prevDeg + dir -1)%7)+1,1,7);
       }
       prevDeg = chosen;
 
-      // rhythm placement grid (mostly 1/8, some 1/16)
       const grid = chance(rng, 0.30 + prof.aggro*0.20) ? SIXTEENTH : (SIXTEENTH*2);
       let step = Math.floor((rng() * motifTicks) / grid) * grid;
 
-      // rests probability (space)
       if(chance(rng, 0.22 + prof.space*0.25)) continue;
 
-      // pitch (keep mostly mid/high)
       const octaveShift = chance(rng, 0.55) ? 1 : 0;
       const note = degreeToMidi(rootMidi, intervals, chosen, octaveShift);
-
-      // length short
       const len = chance(rng,0.70) ? grid : grid*2;
       motif.push({t: step, n: note, d: len});
     }
 
-    // Sort motif and apply repetition/mutations across 8 bars
     motif.sort((a,b)=>a.t-b.t);
 
     const loops = Math.floor(LOOP_TICKS / motifTicks);
     for(let li=0; li<loops; li++){
       const baseT = li * motifTicks;
-
-      // first 2 loops: exact
-      // later loops: mutate based on repetition
       const mutateP = (li < 2) ? 0 : (1 - prof.repetition) * 0.9;
 
       for(const ev of motif){
@@ -617,41 +545,30 @@
 
         if(chance(rng, mutateP)){
           const m = rng();
-          if(m < 0.30){
-            // change last note-ish by nudging
-            n += chance(rng,0.5) ? 2 : -2;
-          } else if(m < 0.50){
-            // shift one step in scale (approx)
-            n += chance(rng,0.5) ? 1 : -1;
-          } else if(m < 0.65){
-            // delete note => skip
-            continue;
-          } else if(m < 0.75){
-            // grace note before downbeat
+          if(m < 0.30) n += chance(rng,0.5) ? 2 : -2;
+          else if(m < 0.50) n += chance(rng,0.5) ? 1 : -1;
+          else if(m < 0.65) continue;
+          else if(m < 0.75){
             const g = n + (chance(rng,0.5)?1:-1);
             addNote(leadEvents, t - SIXTEENTH/2, SIXTEENTH/2, g, randVel(rng, 55, 85));
-          } else {
-            // keep
           }
         }
-
         addNote(leadEvents, t, d, n, randVel(rng, 70, 112));
       }
     }
 
-    // Optional BELL (counter)
+    // BELL
     const bellEvents = [];
     const bellOn = chance(rng, 0.35 + prof.bells*0.55);
     if(bellOn){
-      const bellNotes = [];
       const bellCount = Math.max(2, Math.round(lerp(2,4, prof.density)));
+      const bellNotes = [];
       for(let i=0;i<bellCount;i++){
         const deg = pickWeighted(rng, [
           {k:1,w:2.0},{k:3,w:1.3},{k:5,w:1.8},{k:7,w:1.2},{k:2,w:0.7},{k:4,w:0.7}
         ]);
-        const note = degreeToMidi(rootMidi, intervals, deg, 2); // higher register
+        const note = degreeToMidi(rootMidi, intervals, deg, 2);
         const step = Math.floor((rng() * LOOP_TICKS) / (SIXTEENTH*2)) * (SIXTEENTH*2);
-        // offbeat bias
         const off = step + SIXTEENTH;
         bellNotes.push({t: clamp(off,0,LOOP_TICKS-SIXTEENTH), n: note, d: SIXTEENTH});
       }
@@ -662,13 +579,11 @@
       }
     }
 
-    // 808/BASS
+    // BASS / 808
     const bassEvents = [];
     const slideP = clamp(prof.slides, 0.10, 0.65);
-
-    // derive root notes per bar from progression
     const barRoots = prog.map(p => degreeToMidi(rootBass, intervals, p.deg, 0));
-    // Rhythm: align to kick later; create a sparse pattern first
+
     for(let bar=0; bar<LOOP_BARS; bar++){
       const baseT = bar * BAR;
       const rootN = barRoots[bar];
@@ -677,13 +592,11 @@
         if(chance(rng, 0.20 + prof.space*0.30)) continue;
         const grid = SIXTEENTH*2;
         let step = Math.floor((rng()*BAR)/grid)*grid;
-        // avoid right on snare in halftime feel
         if(isHalftime && Math.abs(step - BEAT*2) < SIXTEENTH) step += grid;
         const len = chance(rng,0.55) ? grid*2 : grid*3;
 
-        // slides: approach note then land
         if(chance(rng, slideP) && i === hits-1){
-          const delta = chance(rng,0.5) ? 5 : 7; // 3-7 semis typical
+          const delta = chance(rng,0.5) ? 5 : 7;
           const from = rootN + (chance(rng,0.5) ? -delta : delta);
           addNote(bassEvents, baseT + step, grid, from, randVel(rng, 70, 110));
           addNote(bassEvents, baseT + step + grid, len, rootN, randVel(rng, 85, 120));
@@ -691,7 +604,6 @@
           addNote(bassEvents, baseT + step, len, rootN, randVel(rng, 78, 120));
         }
 
-        // occasional octave jump near bar end
         if(chance(rng,0.10) && step > BAR - BEAT){
           addNote(bassEvents, baseT + BAR - SIXTEENTH*2, SIXTEENTH*2, rootN + 12, randVel(rng, 70, 110));
         }
@@ -703,29 +615,18 @@
     const snareEvents = [];
     const hatEvents = [];
 
-    // snare placement
-    const snareBeat = isHalftime ? 3 : 2; // beat number in bar (1-based)
+    const snareBeat = isHalftime ? 3 : 2;
     for(let bar=0; bar<LOOP_BARS; bar++){
       const baseT = bar*BAR;
       const tSn = baseT + (snareBeat-1)*BEAT;
       addDrum(snareEvents, tSn, SIXTEENTH, DR.snare, randVel(rng, 92, 122));
-      // layer clap
-      if(chance(rng,0.70)){
-        addDrum(snareEvents, tSn, SIXTEENTH, DR.clap, randVel(rng, 72, 102));
-      }
-      // ghost clap
+      if(chance(rng,0.70)) addDrum(snareEvents, tSn, SIXTEENTH, DR.clap, randVel(rng, 72, 102));
       if(prof.aggro > 0.6 && chance(rng,0.30)){
         addDrum(snareEvents, tSn - SIXTEENTH/2, SIXTEENTH/2, DR.clap, randVel(rng, 45, 70));
       }
     }
 
-    // kick templates
-    const kickTemplate = pickWeighted(rng, [
-      {k:"A", w:0.42}, // simple
-      {k:"B", w:0.38}, // bounce
-      {k:"C", w:0.20}, // more frequent
-    ]);
-
+    const kickTemplate = pickWeighted(rng, [{k:"A",w:0.42},{k:"B",w:0.38},{k:"C",w:0.20}]);
     for(let bar=0; bar<LOOP_BARS; bar++){
       const baseT = bar*BAR;
       const hitsTarget = Math.round(lerp(2, 6, prof.density));
@@ -738,9 +639,9 @@
 
       if(kickTemplate === "A"){
         addPos(0);
-        if(chance(rng,0.55)) addPos(BEAT + SIXTEENTH*2); // and of 2
-        addPos(BEAT*2); // 3
-        if(chance(rng,0.35)) addPos(BEAT*3 + SIXTEENTH); // before 4
+        if(chance(rng,0.55)) addPos(BEAT + SIXTEENTH*2);
+        addPos(BEAT*2);
+        if(chance(rng,0.35)) addPos(BEAT*3 + SIXTEENTH);
       } else if(kickTemplate === "B"){
         addPos(0);
         addPos(BEAT + SIXTEENTH);
@@ -754,37 +655,30 @@
         if(chance(rng,0.50)) addPos(BEAT*3 + SIXTEENTH*2);
       }
 
-      // fill random extra hits up to target
       while(positions.size < hitsTarget){
         if(chance(rng, 0.25 + prof.space*0.25)) break;
         addPos(rng()*BAR);
       }
 
-      // avoid kick on exact snare 80%
       const snT = (snareBeat-1)*BEAT;
       if(chance(rng,0.80)) positions.delete(snT);
 
-      // stutter near bar end
       if(chance(rng,0.20) && prof.aggro > 0.5){
         addPos(BAR - SIXTEENTH*2);
         addPos(BAR - SIXTEENTH);
       }
 
-      const sorted = [...positions].sort((a,b)=>a-b);
-      for(const p of sorted){
+      [...positions].sort((a,b)=>a-b).forEach(p=>{
         addDrum(kickEvents, baseT+p, SIXTEENTH, DR.kick, randVel(rng, 98, 124));
-      }
+      });
     }
 
-    // hats
     const baseGrid = chance(rng, 0.70) ? (SIXTEENTH*2) : SIXTEENTH;
     for(let t=0; t<LOOP_TICKS; t+=baseGrid){
       if(chance(rng, 0.10 + prof.space*0.25)) continue;
-      const v = randVel(rng, 60, 96);
-      addDrum(hatEvents, t, baseGrid/2, DR.hatC, v);
+      addDrum(hatEvents, t, baseGrid/2, DR.hatC, randVel(rng, 60, 96));
     }
 
-    // rolls per bar
     for(let bar=0; bar<LOOP_BARS; bar++){
       const baseT = bar*BAR;
       const rollChance = clamp(0.15 + prof.aggro*0.35, 0.15, 0.60);
@@ -793,24 +687,21 @@
         const len = chance(rng,0.60) ? (SIXTEENTH*4) : (SIXTEENTH*8);
         const rate = pickWeighted(rng, [
           {k:SIXTEENTH, w:0.55},
-          {k:(SIXTEENTH*2)/3, w:0.25}, // ~triplet-ish
+          {k:(SIXTEENTH*2)/3, w:0.25},
           {k:SIXTEENTH/2, w:0.20},
         ]);
         for(let tt=start; tt<start+len; tt+=rate){
           addDrum(hatEvents, tt, rate/2, DR.hatC, randVel(rng, 55, 92));
         }
       }
-      // open hat
       if(chance(rng,0.15)){
         addDrum(hatEvents, baseT + BAR - SIXTEENTH*2, SIXTEENTH, DR.hatO, randVel(rng, 60, 95));
       }
     }
 
-    // bar-end fills
     for(let bar=0; bar<LOOP_BARS; bar++){
       if(chance(rng, prof.fills)){
         const baseT = bar*BAR;
-        // a simple fill: snare flam or hat burst
         if(chance(rng,0.55)){
           addDrum(snareEvents, baseT + BAR - SIXTEENTH, SIXTEENTH/2, DR.snare, randVel(rng, 80, 115));
           addDrum(snareEvents, baseT + BAR - SIXTEENTH/2, SIXTEENTH/2, DR.snare, randVel(rng, 92, 124));
@@ -822,7 +713,7 @@
       }
     }
 
-    // TEXTURE sparse track
+    // TEXTURE
     const textEvents = [];
     if(chance(rng, 0.30 + prof.texture*0.60)){
       const hits = Math.round(lerp(4, 10, prof.texture));
@@ -835,13 +726,10 @@
       }
     }
 
-    // Post constraints: clamp too-dense lead vs bass on downbeats
     enforceClashControl(leadEvents, bassEvents, rng);
 
-    // Build arrangement
     const arrangement = buildArrangement(state.songSketch, LOOP_TICKS);
 
-    // Apply arrangement to all tracks (mute layers per section)
     const arranged = applyArrangement({
       PAD: padEvents,
       LEAD: leadEvents,
@@ -854,11 +742,7 @@
     }, arrangement, rng, prof);
 
     return {
-      seed,
-      bpm,
-      root,
-      scale,
-      isHalftime,
+      seed, bpm, root, scale, isHalftime,
       mainArtist: blend.main,
       mode: blend.mode,
       artists: [...state.selectedArtists],
@@ -868,172 +752,49 @@
     };
   }
 
-  function buildArrangement(songSketch, loopTicks){
-    // If OFF: just 8 bars (single loop)
-    if(!songSketch){
-      return [{ name:"LOOP", start:0, len:loopTicks, mutes:{} }];
-    }
-
-    // If ON: build ~24 bars from the 8-bar loop blocks
-    // Intro 4 bars (half loop), Drop 8 bars (full loop), Break 4 bars, Return 8 bars.
-    const intro = loopTicks/2;
-    const full = loopTicks;
-    const breakLen = loopTicks/2;
-
-    return [
-      { name:"INTRO",  start:0,           len:intro,    mutes:{KICK:true, BASS:true} },
-      { name:"DROP",   start:intro,       len:full,     mutes:{} },
-      { name:"BREAK",  start:intro+full,  len:breakLen, mutes:{KICK:true, BASS:true, HATS:true} },
-      { name:"RETURN", start:intro+full+breakLen, len:full, mutes:{} },
-    ];
-  }
-
-  function applyArrangement(tracks, arrangement, rng, prof){
-    // For each section, copy the loop content into that section length
-    // and apply mutes plus occasional "pull-outs".
-    const out = {};
-    const loopLen = LOOP_TICKS;
-
-    for(const [k, evs] of Object.entries(tracks)){
-      out[k] = [];
-      for(const sec of arrangement){
-        const sectionEvents = [];
-        const copies = Math.ceil(sec.len / loopLen);
-
-        for(let c=0; c<copies; c++){
-          const offset = sec.start + c*loopLen;
-          const maxT = sec.start + sec.len;
-
-          // Copy events that fit
-          for(const e of evs){
-            const t = e.t + offset;
-            if(t >= sec.start && t < maxT){
-              sectionEvents.push({...e, t});
-            }
-          }
-        }
-
-        // Apply mutes
-        const muted = sec.mutes[k] === true;
-        if(!muted){
-          // Pull-outs: 20–40% chance each 4 bars (approx)
-          // We'll implement by randomly removing events in a half-bar window
-          const pullChance = clamp(0.20 + prof.space*0.20, 0.20, 0.40);
-          if(chance(rng, pullChance)){
-            const windowStart = sec.start + Math.floor((rng()*sec.len)/(BAR)) * BAR;
-            const w0 = windowStart + (chance(rng,0.5) ? 0 : BAR/2);
-            const w1 = w0 + BAR/2;
-            out[k].push(...sectionEvents.filter(e => !(e.t >= w0 && e.t < w1 && chance(rng,0.65))));
-          } else {
-            out[k].push(...sectionEvents);
-          }
-        }
-      }
-
-      // Sort
-      out[k].sort((a,b)=>a.t-b.t);
-    }
-    return out;
-  }
-
-  function enforceClashControl(lead, bass, rng){
-    // If too many lead notes coincide with bass notes on downbeats, remove some lead downbeat notes.
-    // Simple heuristic: compare in 1/16 grid.
-    const bassSet = new Set(bass.map(e => Math.floor(e.t / SIXTEENTH)));
-    let downbeatCount = 0;
-    for(const e of lead){
-      const s = Math.floor(e.t / SIXTEENTH);
-      if(bassSet.has(s) && (e.t % BEAT === 0)) downbeatCount++;
-    }
-    if(downbeatCount >= 6){
-      for(let i=lead.length-1; i>=0; i--){
-        const e = lead[i];
-        if((e.t % BEAT === 0) && chance(rng,0.35)){
-          lead.splice(i,1);
-        }
-      }
-    }
-  }
-
-  function randVel(rng, a, b){
-    return clamp(Math.round(lerp(a,b,rng())), 1, 127);
-  }
-
-  function addNote(arr, t, d, n, v){
-    arr.push({t: Math.max(0, Math.floor(t)), d: Math.max(1, Math.floor(d)), n: n|0, v: v|0, type:"note"});
-  }
-  function addChord(arr, t, d, notes, v){
-    for(const n of notes) addNote(arr, t, d, n, v);
-  }
-  function addDrum(arr, t, d, n, v){
-    arr.push({t: Math.max(0, Math.floor(t)), d: Math.max(1, Math.floor(d)), n: n|0, v: v|0, type:"drum"});
-  }
-
-  // ---------- MIDI WRITER ----------
+  // ---------- MIDI WRITER (unchanged) ----------
   function u32be(n){ return [(n>>>24)&255,(n>>>16)&255,(n>>>8)&255,n&255]; }
   function u16be(n){ return [(n>>>8)&255,n&255]; }
-  function strBytes(s){
-    const out=[];
-    for(let i=0;i<s.length;i++) out.push(s.charCodeAt(i)&255);
-    return out;
-  }
+  function strBytes(s){ const out=[]; for(let i=0;i<s.length;i++) out.push(s.charCodeAt(i)&255); return out; }
   function vlq(n){
-    // variable-length quantity
     let v = n >>> 0;
     let bytes = [v & 0x7F];
     v >>>= 7;
-    while(v){
-      bytes.unshift((v & 0x7F) | 0x80);
-      v >>>= 7;
-    }
+    while(v){ bytes.unshift((v & 0x7F) | 0x80); v >>>= 7; }
     return bytes;
   }
-  function chunk(type, data){
-    return [...strBytes(type), ...u32be(data.length), ...data];
-  }
+  function chunk(type, data){ return [...strBytes(type), ...u32be(data.length), ...data]; }
 
   function buildMidi(song){
-    // Format 1, multiple tracks
     const tracks = [];
 
-    // Track 0: tempo + time signature + end
     const tempoTrack = [];
-    // delta 0: Time signature 4/4 (or still 4/4 in halftime)
     tempoTrack.push(...vlq(0), 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08);
-    // delta 0: Tempo
-    const mpqn = Math.round(60000000 / song.bpm); // microseconds per quarter note
+    const mpqn = Math.round(60000000 / song.bpm);
     tempoTrack.push(...vlq(0), 0xFF, 0x51, 0x03, (mpqn>>>16)&255, (mpqn>>>8)&255, mpqn&255);
-    // Track name meta
     const name = `Y2K MIDI GEN • ${song.artists.join(" + ")} • ${song.mode}`;
     tempoTrack.push(...vlq(0), 0xFF, 0x03, name.length, ...strBytes(name));
-    // end of track
     tempoTrack.push(...vlq(0), 0xFF, 0x2F, 0x00);
     tracks.push(chunk("MTrk", tempoTrack));
 
-    // For each music track: name, optional program change, then notes
     for(const tr of TRACKS){
       const evs = song.tracks[tr.id] || [];
       const trk = [];
-      // track name
       const tn = tr.name;
       trk.push(...vlq(0), 0xFF, 0x03, tn.length, ...strBytes(tn));
 
-      // program change for melodic tracks (not drums)
       if(!tr.drum){
         trk.push(...vlq(0), 0xC0 | (tr.ch & 0x0F), (tr.prog ?? 0) & 0x7F);
       }
 
-      // Build note on/off events list
       const events = [];
       for(const e of evs){
         const ch = tr.ch & 0x0F;
-        const on = {t:e.t, bytes:[0x90|ch, e.n & 0x7F, e.v & 0x7F]};
-        const off = {t:e.t + e.d, bytes:[0x80|ch, e.n & 0x7F, 0]};
-        events.push(on, off);
+        events.push({t:e.t, bytes:[0x90|ch, e.n & 0x7F, e.v & 0x7F]});
+        events.push({t:e.t + e.d, bytes:[0x80|ch, e.n & 0x7F, 0]});
       }
       events.sort((a,b)=>a.t-b.t);
 
-      // delta encode
       let lastT = 0;
       for(const ev of events){
         const dt = Math.max(0, ev.t - lastT);
@@ -1041,40 +802,21 @@
         lastT = ev.t;
       }
 
-      // end of track
       trk.push(...vlq(0), 0xFF, 0x2F, 0x00);
       tracks.push(chunk("MTrk", trk));
     }
 
-    // header
-    const format = 1;
-    const ntrks = tracks.length;
-    const division = PPQ;
-    const header = chunk("MThd", [
-      ...u16be(format),
-      ...u16be(ntrks),
-      ...u16be(division),
-    ]);
-
-    const all = [...header, ...tracks.flat()];
-    return new Uint8Array(all);
+    const header = chunk("MThd", [...u16be(1), ...u16be(tracks.length), ...u16be(PPQ)]);
+    return new Uint8Array([...header, ...tracks.flat()]);
   }
 
-  // ---------- WEB AUDIO PREVIEW ----------
-  let audio = {
-    ctx: null,
-    playing: false,
-    nodes: [],
-    stopAt: 0,
-  };
+  // ---------- AUDIO ENGINE (UPGRADED) ----------
+  let audio = { ctx:null, playing:false, nodes:[], stopAt:0 };
 
   function ensureAudio(){
-    if(!audio.ctx){
-      audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    }
+    if(!audio.ctx) audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
     return audio.ctx;
   }
-
   function stopAudio(){
     if(!audio.playing) return;
     audio.playing = false;
@@ -1088,11 +830,89 @@
     }
   }
 
+  // Simple soft clipper waveshaper
+  function makeClipper(ctx, amount=0.6){
+    const ws = ctx.createWaveShaper();
+    const k = clamp(amount, 0, 1);
+    const n = 1024;
+    const curve = new Float32Array(n);
+    for(let i=0;i<n;i++){
+      const x = (i/(n-1))*2 - 1;
+      // smooth tanh-ish curve
+      curve[i] = Math.tanh(x * (1 + k*6)) * (0.92 + k*0.06);
+    }
+    ws.curve = curve;
+    ws.oversample = "4x";
+    return ws;
+  }
+
+  // Lightweight bitcrush (code-only) via ScriptProcessorNode
+  function makeBitCrusher(ctx, bits=6, reduction=0.35){
+    // bits: 1..16, reduction: 0..1 (lower = more crushing)
+    const sp = ctx.createScriptProcessor(1024, 1, 1);
+    const step = Math.pow(0.5, clamp(bits,1,16));
+    let phaser = 0;
+    let last = 0;
+    const rate = clamp(reduction, 0.02, 1.0);
+    sp.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      const output = e.outputBuffer.getChannelData(0);
+      for(let i=0;i<input.length;i++){
+        phaser += rate;
+        if(phaser >= 1.0){
+          phaser -= 1.0;
+          last = step * Math.floor(input[i] / step + 0.5);
+        }
+        output[i] = last;
+      }
+    };
+    return sp;
+  }
+
+  // Convolver-ish small room impulse generator (no assets)
+  function makeTinyReverb(ctx, seconds=1.2, decay=2.5){
+    const rate = ctx.sampleRate;
+    const len = Math.floor(rate * seconds);
+    const impulse = ctx.createBuffer(2, len, rate);
+    for(let ch=0; ch<2; ch++){
+      const data = impulse.getChannelData(ch);
+      for(let i=0;i<len;i++){
+        const t = i / len;
+        // decaying noise
+        data[i] = (Math.random()*2-1) * Math.pow(1 - t, decay);
+      }
+    }
+    const conv = ctx.createConvolver();
+    conv.buffer = impulse;
+    return conv;
+  }
+
+  // Auto flags from artists + profile
+  function resolveAudioFlags(song){
+    const prof = song.profile;
+
+    const has = (name) => song.artists.includes(name);
+
+    // AUTO heuristics:
+    const autoClip = (prof.aggro > 0.62 || prof.density > 0.68 || has("KEN CARSON") || has("FIMIGUERRERO"));
+    const autoSide = (prof.density > 0.50 || prof.aggro > 0.50);
+    const autoCrush = has("ESDEEKID"); // your request: auto when esdeekid selected
+
+    const clipOn = state.clipMode === "on" ? true : state.clipMode === "off" ? false : autoClip;
+    const sideOn = state.sidechainMode === "on" ? true : state.sidechainMode === "off" ? false : autoSide;
+    const crushOn = state.crushMode === "on" ? true : state.crushMode === "off" ? false : autoCrush;
+
+    // Strengths (blend-aware)
+    const clipAmt = clamp(lerp(0.35, 0.85, prof.aggro), 0.25, 0.90);
+    const duckAmt = clamp(lerp(0.10, 0.60, (prof.aggro+prof.density)/2), 0.08, 0.70);
+    const crushWet = crushOn ? clamp(lerp(0.12, 0.45, prof.aggro), 0.10, 0.55) : 0;
+
+    return { clipOn, sideOn, crushOn, clipAmt, duckAmt, crushWet };
+  }
+
   function playAudio(song){
     stopAudio();
     const ctx = ensureAudio();
-
-    // iOS requires user gesture; generate/play buttons are gestures.
     if(ctx.state === "suspended") ctx.resume();
 
     audio.playing = true;
@@ -1101,169 +921,355 @@
     const secondsPerBeat = 60 / song.bpm;
     const secondsPerTick = secondsPerBeat / PPQ;
 
-    // Determine total length from arrangement
     const totalTicks = song.arrangement.reduce((mx,s)=>Math.max(mx, s.start+s.len), 0);
-    audio.stopAt = start + totalTicks * secondsPerTick + 0.1;
+    audio.stopAt = start + totalTicks * secondsPerTick + 0.15;
 
-    // Master
+    const flags = resolveAudioFlags(song);
+
+    // --- BUS ROUTING ---
     const master = ctx.createGain();
-    master.gain.value = 0.85;
-    master.connect(ctx.destination);
-    audio.nodes.push(master);
+    master.gain.value = 0.92;
 
-    // Simple synth per channel
-    function synthNote(t, dur, midi, vel, type){
+    const musicBus = ctx.createGain(); // pads/leads/bells/texture
+    musicBus.gain.value = 1.0;
+
+    const drumBus = ctx.createGain();
+    drumBus.gain.value = 0.95;
+
+    const bassBus = ctx.createGain();
+    bassBus.gain.value = 0.95;
+
+    // Reverb on music bus (subtle, helps “understand” vibe)
+    const rev = makeTinyReverb(ctx, 1.1, 2.2);
+    const revWet = ctx.createGain();
+    const revDry = ctx.createGain();
+    revWet.gain.value = 0.22 + song.profile.bells*0.10;
+    revDry.gain.value = 0.92;
+
+    // Stereo widen-ish (Haas micro delay) for music only
+    const widenDelayL = ctx.createDelay(0.03);
+    const widenDelayR = ctx.createDelay(0.03);
+    widenDelayL.delayTime.value = 0.012;
+    widenDelayR.delayTime.value = 0.017;
+    const widenGain = ctx.createGain();
+    widenGain.gain.value = 0.18;
+
+    const splitter = ctx.createChannelSplitter(2);
+    const merger = ctx.createChannelMerger(2);
+
+    // Master filter (clean lowcut)
+    const hp = ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 18;
+    hp.Q.value = 0.7;
+
+    // Optional crush on master (wet blend)
+    const crushNode = makeBitCrusher(ctx, 6, 0.22); // heavier grit
+    const crushWet = ctx.createGain();
+    const crushDry = ctx.createGain();
+    crushWet.gain.value = flags.crushWet;
+    crushDry.gain.value = 1 - flags.crushWet;
+
+    // Optional clip on master
+    const clipper = makeClipper(ctx, flags.clipAmt);
+
+    // Connect buses → master chain
+    // musicBus → rev split → widen → master
+    musicBus.connect(rev);
+    musicBus.connect(revDry);
+    rev.connect(revWet);
+
+    // combine dry+wet then widen
+    const musicSum = ctx.createGain();
+    revDry.connect(musicSum);
+    revWet.connect(musicSum);
+
+    // widen path
+    musicSum.connect(splitter);
+    splitter.connect(widenDelayL, 0);
+    splitter.connect(widenDelayR, 1);
+    widenDelayL.connect(merger, 0, 0);
+    widenDelayR.connect(merger, 0, 1);
+    merger.connect(widenGain);
+
+    // dry directly too (keep center)
+    const musicToMaster = ctx.createGain();
+    musicToMaster.gain.value = 1.0;
+    musicSum.connect(musicToMaster);
+
+    // drums + bass straight to master (pre-effects)
+    drumBus.connect(master);
+    bassBus.connect(master);
+
+    // music sum + widen to master
+    musicToMaster.connect(master);
+    widenGain.connect(master);
+
+    // master → (crush blend) → (clip?) → hp → destination
+    const preOut = ctx.createGain();
+    master.connect(preOut);
+
+    // crush blend
+    preOut.connect(crushDry);
+    preOut.connect(crushNode);
+    crushNode.connect(crushWet);
+
+    const postCrush = ctx.createGain();
+    crushDry.connect(postCrush);
+    crushWet.connect(postCrush);
+
+    if(flags.clipperOn){
+      // (typo guard; define below)
+    }
+
+    // clip and output
+    const post = ctx.createGain();
+    if(flags.clipOn){
+      postCrush.connect(clipper);
+      clipper.connect(post);
+    } else {
+      postCrush.connect(post);
+    }
+
+    post.connect(hp);
+    hp.connect(ctx.destination);
+
+    // keep refs
+    audio.nodes.push(
+      master, musicBus, drumBus, bassBus,
+      rev, revWet, revDry, musicSum,
+      splitter, merger, widenDelayL, widenDelayR, widenGain, musicToMaster,
+      preOut, crushDry, crushNode, crushWet, postCrush, clipper, post, hp
+    );
+
+    // --- SIDECHAIN (auto) ---
+    // We duck ONLY musicBus (not drums, not bass) on kick hits.
+    const duckGain = ctx.createGain();
+    duckGain.gain.value = 1.0;
+
+    // Put duckGain after musicSum but before master:
+    // easiest: insert by routing musicToMaster and widenGain through duckGain.
+    musicToMaster.disconnect();
+    widenGain.disconnect();
+    musicToMaster.connect(duckGain);
+    widenGain.connect(duckGain);
+    duckGain.connect(master);
+    audio.nodes.push(duckGain);
+
+    // Schedule ducking from kick events
+    if(flags.sideOn){
+      const kickEvents = song.tracks.KICK || [];
+      const duckDepth = flags.duckAmt;    // 0.1..0.7
+      const attack = 0.008;
+      const release = lerp(0.08, 0.22, song.profile.space); // slower release when space is higher
+
+      // baseline 1
+      duckGain.gain.setValueAtTime(1.0, start);
+
+      for(const e of kickEvents){
+        const t = start + (e.t * secondsPerTick);
+        const min = clamp(1.0 - duckDepth, 0.25, 0.95);
+
+        // quick down then release
+        duckGain.gain.cancelScheduledValues(t);
+        duckGain.gain.setValueAtTime(duckGain.gain.value, t);
+        duckGain.gain.linearRampToValueAtTime(min, t + attack);
+        duckGain.gain.linearRampToValueAtTime(1.0, t + attack + release);
+      }
+    }
+
+    // --- SYNTHS/DRUMS ---
+    const seconds = (ticks) => ticks * secondsPerTick;
+
+    // “Closer” patches per lane (still code-only)
+    // We map by main artist + blend profile.
+    const main = song.mainArtist;
+    const prof = song.profile;
+
+    // helper: choose oscillator types
+    function oscFor(kind){
+      if(kind === "pad"){
+        if(main === "2HOLLIS" || main === "FENG") return ["triangle","sine"];
+        if(main === "BLADEE" || main === "FAKEMINK") return ["sine","sine"];
+        return ["triangle","triangle"];
+      }
+      if(kind === "lead"){
+        if(main === "KEN CARSON") return ["sawtooth","sawtooth"];
+        if(main === "ESDEEKID" || main === "FIMIGUERRERO") return ["square","sawtooth"];
+        return ["square","square"];
+      }
+      if(kind === "bass"){
+        return ["sine","sawtooth"];
+      }
+      if(kind === "bell"){
+        return ["sine","sine"];
+      }
+      return ["square","triangle"];
+    }
+
+    function makeVoiceBus(kind){
+      // per-voice filter + saturation flavor
+      const g = ctx.createGain();
+      g.gain.value = 1.0;
+
+      const f = ctx.createBiquadFilter();
+      f.type = (kind === "bass") ? "lowpass" : (kind === "pad" ? "lowpass" : "bandpass");
+      f.frequency.value =
+        kind === "bass" ? lerp(260, 540, prof.density) :
+        kind === "pad" ? lerp(900, 1600, 1 - prof.space) :
+        lerp(1200, 2600, prof.aggro);
+      f.Q.value = kind === "lead" ? 1.2 : 0.8;
+
+      const sat = makeClipper(ctx, clamp(lerp(0.15, 0.65, prof.aggro), 0.10, 0.75));
+
+      g.connect(f);
+      f.connect(sat);
+
+      // route to appropriate bus
+      if(kind === "bass") sat.connect(bassBus);
+      else sat.connect(musicBus);
+
+      audio.nodes.push(g,f,sat);
+      return g;
+    }
+
+    // Cache buses for each kind
+    const busPad  = makeVoiceBus("pad");
+    const busLead = makeVoiceBus("lead");
+    const busBell = makeVoiceBus("bell");
+    const busBass = makeVoiceBus("bass");
+    const busText = makeVoiceBus("text");
+
+    function synthNote(t, dur, midi, vel, kind){
       const freq = 440 * Math.pow(2, (midi - 69) / 12);
+      const ampBase =
+        kind === "pad" ? 0.16 :
+        kind === "bell" ? 0.18 :
+        kind === "bass" ? 0.22 :
+        0.14;
+
+      const amp = (vel/127) * ampBase;
+
+      const out = (kind === "pad") ? busPad :
+                  (kind === "bell") ? busBell :
+                  (kind === "bass") ? busBass :
+                  (kind === "text") ? busText :
+                  busLead;
 
       const g = ctx.createGain();
       g.gain.value = 0.0001;
-      g.connect(master);
+      g.connect(out);
 
-      const attack = 0.005;
-      const release = 0.08;
+      const attack = (kind === "pad") ? 0.02 : 0.006;
+      const release = (kind === "pad") ? 0.18 : 0.08;
 
-      const amp = (vel/127) * 0.20;
       g.gain.setValueAtTime(0.0001, t);
       g.gain.exponentialRampToValueAtTime(Math.max(0.0002, amp), t + attack);
       g.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(attack+0.01, dur - release));
       g.gain.setValueAtTime(0.0001, t + dur);
 
-      if(type === "pad"){
-        const o1 = ctx.createOscillator();
-        const o2 = ctx.createOscillator();
-        o1.type = "sine";
-        o2.type = "triangle";
-        o1.frequency.value = freq;
-        o2.frequency.value = freq * 0.995;
+      const [t1,t2] = oscFor(kind);
+      const o1 = ctx.createOscillator();
+      const o2 = ctx.createOscillator();
+      o1.type = t1;
+      o2.type = t2;
 
-        const f = ctx.createBiquadFilter();
-        f.type = "lowpass";
-        f.frequency.value = 1400;
-        f.Q.value = 0.7;
+      // detune by lane
+      const det = (main === "KEN CARSON") ? 9 : (main === "FAKEMINK" || main === "BLADEE") ? 6 : 4;
+      o1.frequency.value = freq;
+      o2.frequency.value = freq * (1 - det/1200);
 
-        o1.connect(f); o2.connect(f); f.connect(g);
-        o1.start(t); o2.start(t);
-        o1.stop(t+dur+0.02); o2.stop(t+dur+0.02);
-
-        audio.nodes.push(o1,o2,f,g);
-      } else if(type === "bass"){
-        const o = ctx.createOscillator();
-        o.type = "sawtooth";
-        o.frequency.value = freq;
-
-        const f = ctx.createBiquadFilter();
-        f.type = "lowpass";
-        f.frequency.value = 420;
-        f.Q.value = 0.9;
-
-        o.connect(f); f.connect(g);
-        o.start(t); o.stop(t+dur+0.02);
-        audio.nodes.push(o,f,g);
-      } else if(type === "bell"){
-        const o = ctx.createOscillator();
-        o.type = "sine";
-        o.frequency.value = freq;
-
-        const o2 = ctx.createOscillator();
-        o2.type = "sine";
-        o2.frequency.value = freq*2.01;
-
-        const g2 = ctx.createGain();
-        g2.gain.value = 0.35;
-        o2.connect(g2); g2.connect(g);
-
-        o.connect(g);
-        o.start(t); o2.start(t);
-        o.stop(t+dur+0.05); o2.stop(t+dur+0.05);
-        audio.nodes.push(o,o2,g2,g);
-      } else {
-        // lead/texture
-        const o = ctx.createOscillator();
-        o.type = "square";
-        o.frequency.value = freq;
-
-        const f = ctx.createBiquadFilter();
-        f.type = "bandpass";
-        f.frequency.value = Math.min(2400, Math.max(400, freq*1.2));
-        f.Q.value = 1.2;
-
-        o.connect(f); f.connect(g);
-        o.start(t); o.stop(t+dur+0.02);
-        audio.nodes.push(o,f,g);
+      // Bass pitch envelope for 808-ish thump (code-only)
+      if(kind === "bass"){
+        o1.frequency.setValueAtTime(freq * 2.1, t);
+        o1.frequency.exponentialRampToValueAtTime(freq, t + 0.05);
+        o2.frequency.setValueAtTime(freq * 2.1, t);
+        o2.frequency.exponentialRampToValueAtTime(freq * (1 - det/1800), t + 0.05);
       }
+
+      // Bell adds harmonic
+      if(kind === "bell"){
+        o2.frequency.value = freq * 2.01;
+      }
+
+      o1.connect(g);
+      o2.connect(g);
+
+      o1.start(t);
+      o2.start(t);
+      o1.stop(t + dur + 0.03);
+      o2.stop(t + dur + 0.03);
+
+      audio.nodes.push(o1,o2,g);
     }
 
     function drumHit(t, kind, vel){
       const v = (vel/127);
+
+      // DRUM BUS transient clip (helps feel more “real”)
       const g = ctx.createGain();
-      g.connect(master);
+      g.connect(drumBus);
       g.gain.value = 0.0001;
 
-      const dur = 0.10;
+      // Short envelope
+      const dur = (kind === "kick") ? 0.14 : (kind === "snare" || kind === "clap") ? 0.12 : 0.06;
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.22*v + 0.0002, t + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.30*v + 0.0002, t + 0.002);
       g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
 
       if(kind === "kick"){
         const o = ctx.createOscillator();
         o.type = "sine";
-        o.frequency.setValueAtTime(120, t);
-        o.frequency.exponentialRampToValueAtTime(40, t + 0.07);
+        o.frequency.setValueAtTime(140, t);
+        o.frequency.exponentialRampToValueAtTime(45, t + 0.09);
         o.connect(g);
         o.start(t);
         o.stop(t + dur);
         audio.nodes.push(o,g);
-      } else if(kind === "snare" || kind === "clap"){
+      } else {
+        // noise based
         const noise = ctx.createBufferSource();
-        const buf = ctx.createBuffer(1, ctx.sampleRate*0.12, ctx.sampleRate);
+        const len = ctx.sampleRate * dur;
+        const buf = ctx.createBuffer(1, len, ctx.sampleRate);
         const data = buf.getChannelData(0);
-        for(let i=0;i<data.length;i++) data[i] = (Math.random()*2-1) * (kind==="clap"?0.65:1.0);
+        const mul = (kind === "clap") ? 0.75 : 1.0;
+        for(let i=0;i<data.length;i++){
+          // slightly “crunchier” noise
+          data[i] = (Math.random()*2-1) * mul * (0.8 + 0.2*Math.random());
+        }
         noise.buffer = buf;
 
         const f = ctx.createBiquadFilter();
         f.type = "highpass";
-        f.frequency.value = kind==="clap"? 1600 : 900;
+        f.frequency.value =
+          (kind === "snare") ? 1100 :
+          (kind === "clap") ? 1700 :
+          (kind === "hatO") ? 6800 : 8200;
 
-        noise.connect(f); f.connect(g);
-        noise.start(t); noise.stop(t+dur);
-        audio.nodes.push(noise,f,g);
-      } else if(kind === "hatC" || kind === "hatO"){
-        const noise = ctx.createBufferSource();
-        const buf = ctx.createBuffer(1, ctx.sampleRate*0.08, ctx.sampleRate);
-        const data = buf.getChannelData(0);
-        for(let i=0;i<data.length;i++) data[i] = (Math.random()*2-1) * 0.7;
-        noise.buffer = buf;
+        // add a tiny resonant peak for snare bite
+        if(kind === "snare"){
+          f.Q.value = 0.9;
+        }
 
-        const f = ctx.createBiquadFilter();
-        f.type = "highpass";
-        f.frequency.value = kind==="hatO"? 6800 : 8200;
-        f.Q.value = 0.7;
-
-        noise.connect(f); f.connect(g);
-        noise.start(t); noise.stop(t + (kind==="hatO"?0.12:0.06));
+        noise.connect(f);
+        f.connect(g);
+        noise.start(t);
+        noise.stop(t + dur);
         audio.nodes.push(noise,f,g);
       }
     }
 
-    // Schedule notes from song.tracks
-    const seconds = (ticks) => ticks * secondsPerTick;
+    const secondsTick = (ticks) => start + seconds(ticks);
 
-    // melodic track mapping
-    const mapType = {
-      PAD: "pad",
-      LEAD: "lead",
-      BELL: "bell",
-      BASS: "bass",
-      TEXT: "texture",
-    };
+    // Schedule tracks
+    const mapType = { PAD:"pad", LEAD:"lead", BELL:"bell", BASS:"bass", TEXT:"text" };
 
     for(const tr of TRACKS){
       const evs = song.tracks[tr.id] || [];
       for(const e of evs){
-        const t = start + seconds(e.t);
+        const t = secondsTick(e.t);
         const dur = Math.max(0.03, seconds(e.d));
         if(tr.drum){
-          // Map note to drum kind
           if(e.n === DR.kick) drumHit(t, "kick", e.v);
           else if(e.n === DR.snare) drumHit(t, "snare", e.v);
           else if(e.n === DR.clap) drumHit(t, "clap", e.v);
@@ -1278,9 +1284,7 @@
 
     // Auto-stop
     const stopDelayMs = Math.max(0, (audio.stopAt - ctx.currentTime) * 1000);
-    window.setTimeout(() => {
-      if(audio.playing) stopAudio();
-    }, stopDelayMs);
+    window.setTimeout(() => { if(audio.playing) stopAudio(); }, stopDelayMs);
   }
 
   // ---------- DOWNLOAD ----------
@@ -1303,7 +1307,7 @@
     return `Y2K_MIDI_${preset}_${bpm}_${key}_SEED${song.seed}.mid`;
   }
 
-  // ---------- RENDER TRACKLIST ----------
+  // ---------- TRACKLIST ----------
   function renderTrackList(song){
     trackListEl.innerHTML = "";
     const totalTicks = song.arrangement.reduce((mx,s)=>Math.max(mx, s.start+s.len), 0);
@@ -1321,15 +1325,13 @@
       const evs = song.tracks[tr.id] || [];
       const item = document.createElement("div");
       item.className = "trackItem";
-      const mutedHint = (evs.length === 0) ? "—" : `${evs.length} NOTES`;
       item.innerHTML = `
         <div class="trackName">${tr.name}</div>
-        <div class="trackMeta">${mutedHint}</div>
+        <div class="trackMeta">${evs.length ? `${evs.length} NOTES` : "—"}</div>
       `;
       trackListEl.appendChild(item);
     }
 
-    // arrangement list
     const arr = document.createElement("div");
     arr.className = "trackItem";
     const secText = song.arrangement.map(s => `${s.name}:${Math.round(s.len/BAR)}b`).join(" • ");
@@ -1347,7 +1349,6 @@
 
     const blend = blendProfiles(state.selectedArtists);
     if(state.bpmMode === "artist"){
-      // update default range fields to main-artist recommended (for visibility)
       bpmMinInput.value = String(blend.profile.bpm[0]);
       bpmMaxInput.value = String(blend.profile.bpm[1]);
     }
@@ -1355,18 +1356,13 @@
     const song = buildSong(state.seed);
     state.resolved = song;
 
-    // UI tags
     bpmNowEl.textContent = `BPM: ${song.bpm}`;
     keyNowEl.textContent = `KEY: ${noteName(song.root)} ${song.scale.toUpperCase()}`;
     artistsNowEl.textContent = `ARTISTS: ${song.artists.join(" + ")}`;
 
     updateModeLabel();
 
-    // MIDI
-    const bytes = buildMidi(song);
-    state.midiBytes = bytes;
-
-    // Tracklist
+    state.midiBytes = buildMidi(song);
     renderTrackList(song);
   }
 
@@ -1378,7 +1374,6 @@
       copySeedBtn.textContent = "COPIED";
       setTimeout(()=>copySeedBtn.textContent="COPY", 900);
     }catch{
-      // fallback
       const ta = document.createElement("textarea");
       ta.value = txt;
       document.body.appendChild(ta);
@@ -1390,21 +1385,10 @@
     }
   });
 
-  generateBtn.addEventListener("click", () => {
-    generate();
-  });
-
-  playBtn.addEventListener("click", () => {
-    if(!state.resolved) generate();
-    playAudio(state.resolved);
-  });
-
-  stopBtn.addEventListener("click", () => {
-    stopAudio();
-  });
-
+  generateBtn.addEventListener("click", () => generate());
+  playBtn.addEventListener("click", () => { if(!state.resolved) generate(); playAudio(state.resolved); });
+  stopBtn.addEventListener("click", () => stopAudio());
   settingsBtn.addEventListener("click", () => toggleSettings());
-
   hideBtn.addEventListener("click", () => setHiddenHUD(!state.hiddenHUD));
   showBtn.addEventListener("click", () => setHiddenHUD(false));
 
@@ -1426,32 +1410,30 @@
     bpmDisplay.textContent = String(state.bpmManual);
   });
 
-  // Segmented buttons
   document.addEventListener("click", (e) => {
     const btn = e.target.closest(".segBtn");
     if(!btn) return;
     const s = btn.dataset.setting;
     const v = btn.dataset.value;
 
-    if(s === "songSketch"){
-      state.songSketch = (v === "on");
-    } else if(s === "bpmMode"){
+    if(s === "songSketch") state.songSketch = (v === "on");
+    else if(s === "bpmMode"){
       state.bpmMode = v;
-      // in artist mode, sync suggested range
       if(v === "artist"){
         const [mn,mx] = getArtistBpmRange();
         bpmMinInput.value = mn;
         bpmMaxInput.value = mx;
       }
-    } else if(s === "keyMode"){
-      state.keyMode = v;
-    } else if(s === "scaleMode"){
-      state.scaleMode = v;
     }
+    else if(s === "keyMode") state.keyMode = v;
+    else if(s === "scaleMode") state.scaleMode = v;
+    else if(s === "clipMode") state.clipMode = v;
+    else if(s === "sidechainMode") state.sidechainMode = v;
+    else if(s === "crushMode") state.crushMode = v;
+
     syncSegUI();
   });
 
-  // Inputs update state
   bpmFixedInput.addEventListener("change", () => {
     state.bpmFixed = clamp(parseInt(bpmFixedInput.value||"170",10), 60, 220);
   });
@@ -1468,21 +1450,24 @@
 
   // ---------- INIT ----------
   function init(){
-    // default artist selection
     state.selectedArtists = ["FAKEMINK"];
     state.songSketch = false;
     state.bpmMode = "artist";
     state.keyMode = "auto";
     state.scaleMode = "auto";
-    state.root = 9; // A
+    state.root = 9;
     state.bpmManual = 170;
+
+    // NEW defaults
+    state.clipMode = "auto";
+    state.sidechainMode = "auto";
+    state.crushMode = "auto";
 
     buildArtistChips();
     buildKeyButtons();
     updateModeLabel();
     syncSegUI();
 
-    // First generate immediately (no user permission required)
     generate();
   }
 
