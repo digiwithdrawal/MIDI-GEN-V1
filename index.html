@@ -123,6 +123,37 @@
           </div>
         </div>
 
+        <!-- NEW: AUDIO AUTO/ON/OFF -->
+        <div class="setting wide">
+          <div class="settingLabel">AUDIO</div>
+
+          <div class="settingHelp" style="margin-top:10px">
+            AUTO follows selected artists so preview is more understandable.
+          </div>
+
+          <div class="settingLabel" style="margin-top:10px">MASTER CLIP</div>
+          <div class="seg">
+            <button class="segBtn" data-setting="clipMode" data-value="auto">AUTO</button>
+            <button class="segBtn" data-setting="clipMode" data-value="on">ON</button>
+            <button class="segBtn" data-setting="clipMode" data-value="off">OFF</button>
+          </div>
+
+          <div class="settingLabel" style="margin-top:10px">SIDECHAIN</div>
+          <div class="seg">
+            <button class="segBtn" data-setting="sidechainMode" data-value="auto">AUTO</button>
+            <button class="segBtn" data-setting="sidechainMode" data-value="on">ON</button>
+            <button class="segBtn" data-setting="sidechainMode" data-value="off">OFF</button>
+          </div>
+
+          <div class="settingLabel" style="margin-top:10px">LOFI / CRUSH</div>
+          <div class="seg">
+            <button class="segBtn" data-setting="crushMode" data-value="auto">AUTO</button>
+            <button class="segBtn" data-setting="crushMode" data-value="on">ON</button>
+            <button class="segBtn" data-setting="crushMode" data-value="off">OFF</button>
+          </div>
+          <div class="settingHelp">AUTO enables CRUSH when ESDEEKID is selected (and blends in MIX).</div>
+        </div>
+
         <div class="setting wide">
           <div class="settingLabel">PICK KEY</div>
           <div id="keyButtons" class="keys"></div>
